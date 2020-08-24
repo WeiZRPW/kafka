@@ -21,10 +21,10 @@ import org.apache.kafka.common.MetricName;
 import org.apache.kafka.common.serialization.Serdes;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.apache.kafka.common.utils.Bytes;
-import org.apache.kafka.streams.KeyValue;
 import org.apache.kafka.streams.KeyValueTimestamp;
 import org.apache.kafka.streams.StreamsBuilder;
 import org.apache.kafka.streams.StreamsConfig;
+import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.streams.TopologyTestDriver;
 import org.apache.kafka.streams.errors.TopologyException;
 import org.apache.kafka.streams.kstream.Consumed;
@@ -41,7 +41,6 @@ import org.apache.kafka.streams.processor.internals.testutil.LogCaptureAppender;
 import org.apache.kafka.streams.state.KeyValueStore;
 import org.apache.kafka.streams.state.SessionStore;
 import org.apache.kafka.streams.state.ValueAndTimestamp;
-import org.apache.kafka.streams.TestInputTopic;
 import org.apache.kafka.test.MockAggregator;
 import org.apache.kafka.test.MockInitializer;
 import org.apache.kafka.test.MockProcessorSupplier;
@@ -50,9 +49,7 @@ import org.apache.kafka.test.StreamsTestUtils;
 import org.junit.Before;
 import org.junit.Test;
 
-import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 
@@ -65,7 +62,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotEquals;
 import static org.junit.Assert.assertNull;
 
-@SuppressWarnings("unchecked")
 public class KGroupedStreamImplTest {
 
     private static final String TOPIC = "topic";
@@ -105,7 +101,7 @@ public class KGroupedStreamImplTest {
 
     @Test(expected = NullPointerException.class)
     public void shouldNotHaveNullWindowsWithWindowedReduce() {
-        groupedStream.windowedBy((Windows) null);
+        groupedStream.windowedBy((Windows<?>) null);
     }
 
     @Test(expected = TopologyException.class)
@@ -149,7 +145,7 @@ public class KGroupedStreamImplTest {
 
     @Test(expected = NullPointerException.class)
     public void shouldNotHaveNullWindowsOnWindowedAggregate() {
-        groupedStream.windowedBy((Windows) null);
+        groupedStream.windowedBy((Windows<?>) null);
     }
 
     @Test(expected = TopologyException.class)
@@ -171,7 +167,7 @@ public class KGroupedStreamImplTest {
             inputTopic.pipeInput("1", "1", 90);
         }
         final Map<Windowed<String>, ValueAndTimestamp<Integer>> result
-            = supplier.theCapturedProcessor().lastValueAndTimestampPerKey;
+            = supplier.theCapturedProcessor().lastValueAndTimestampPerKey();
         assertEquals(
             ValueAndTimestamp.make(2, 30L),
             result.get(new Windowed<>("1", new SessionWindow(10L, 30L))));
@@ -229,7 +225,7 @@ public class KGroupedStreamImplTest {
             inputTopic.pipeInput("1", "1", 90);
         }
         final Map<Windowed<String>, ValueAndTimestamp<Long>> result =
-            supplier.theCapturedProcessor().lastValueAndTimestampPerKey;
+            supplier.theCapturedProcessor().lastValueAndTimestampPerKey();
         assertEquals(
             ValueAndTimestamp.make(2L, 30L),
             result.get(new Windowed<>("1", new SessionWindow(10L, 30L))));
@@ -275,7 +271,7 @@ public class KGroupedStreamImplTest {
             inputTopic.pipeInput("1", "C", 90);
         }
         final Map<Windowed<String>, ValueAndTimestamp<String>> result =
-            supplier.theCapturedProcessor().lastValueAndTimestampPerKey;
+            supplier.theCapturedProcessor().lastValueAndTimestampPerKey();
         assertEquals(
             ValueAndTimestamp.make("A:B", 30L),
             result.get(new Windowed<>("1", new SessionWindow(10L, 30L))));
@@ -397,22 +393,19 @@ public class KGroupedStreamImplTest {
                 Materialized.as(INVALID_STORE_NAME));
     }
 
-    @SuppressWarnings("unchecked")
     @Test(expected = NullPointerException.class)
     public void shouldThrowNullPointerOnReduceWhenMaterializedIsNull() {
-        groupedStream.reduce(MockReducer.STRING_ADDER, (Materialized) null);
+        groupedStream.reduce(MockReducer.STRING_ADDER, null);
     }
 
-    @SuppressWarnings("unchecked")
     @Test(expected = NullPointerException.class)
     public void shouldThrowNullPointerOnAggregateWhenMaterializedIsNull() {
-        groupedStream.aggregate(MockInitializer.STRING_INIT, MockAggregator.TOSTRING_ADDER, (Materialized) null);
+        groupedStream.aggregate(MockInitializer.STRING_INIT, MockAggregator.TOSTRING_ADDER, null);
     }
 
-    @SuppressWarnings("unchecked")
     @Test(expected = NullPointerException.class)
     public void shouldThrowNullPointerOnCountWhenMaterializedIsNull() {
-        groupedStream.count((Materialized) null);
+        groupedStream.count((Materialized<String, Long, KeyValueStore<Bytes, byte[]>>) null);
     }
 
     @Test
@@ -451,11 +444,12 @@ public class KGroupedStreamImplTest {
 
     private void shouldLogAndMeasureSkipsInAggregate(final String builtInMetricsVersion) {
         groupedStream.count(Materialized.<String, Long, KeyValueStore<Bytes, byte[]>>as("count").withKeySerde(Serdes.String()));
-        final LogCaptureAppender appender = LogCaptureAppender.createAndRegister();
         props.setProperty(StreamsConfig.BUILT_IN_METRICS_VERSION_CONFIG, builtInMetricsVersion);
-        try (final TopologyTestDriver driver = new TopologyTestDriver(builder.build(), props)) {
+
+        try (final LogCaptureAppender appender = LogCaptureAppender.createAndRegister(KStreamAggregate.class);
+             final TopologyTestDriver driver = new TopologyTestDriver(builder.build(), props)) {
+
             processData(driver);
-            LogCaptureAppender.unregister(appender);
 
             if (StreamsConfig.METRICS_0100_TO_24.equals(builtInMetricsVersion)) {
                 final Map<MetricName, ? extends Metric> metrics = driver.metrics();
@@ -521,12 +515,12 @@ public class KGroupedStreamImplTest {
                 .withKeySerde(Serdes.String())
                 .withValueSerde(Serdes.String())
         );
-
-        final LogCaptureAppender appender = LogCaptureAppender.createAndRegister();
         props.setProperty(StreamsConfig.BUILT_IN_METRICS_VERSION_CONFIG, builtInMetricsVersion);
-        try (final TopologyTestDriver driver = new TopologyTestDriver(builder.build(), props)) {
+
+        try (final LogCaptureAppender appender = LogCaptureAppender.createAndRegister(KStreamReduce.class);
+             final TopologyTestDriver driver = new TopologyTestDriver(builder.build(), props)) {
+
             processData(driver);
-            LogCaptureAppender.unregister(appender);
 
             if (StreamsConfig.METRICS_0100_TO_24.equals(builtInMetricsVersion)) {
                 final Map<MetricName, ? extends Metric> metrics = driver.metrics();
@@ -588,13 +582,13 @@ public class KGroupedStreamImplTest {
             processData(driver);
 
             assertThat(
-                supplier.theCapturedProcessor().lastValueAndTimestampPerKey.get("1"),
+                supplier.theCapturedProcessor().lastValueAndTimestampPerKey().get("1"),
                 equalTo(ValueAndTimestamp.make("0+A+C+D", 10L)));
             assertThat(
-                supplier.theCapturedProcessor().lastValueAndTimestampPerKey.get("2"),
+                supplier.theCapturedProcessor().lastValueAndTimestampPerKey().get("2"),
                 equalTo(ValueAndTimestamp.make("0+B", 1L)));
             assertThat(
-                supplier.theCapturedProcessor().lastValueAndTimestampPerKey.get("3"),
+                supplier.theCapturedProcessor().lastValueAndTimestampPerKey().get("3"),
                 equalTo(ValueAndTimestamp.make("0+E+F", 9L)));
         }
     }
@@ -628,7 +622,7 @@ public class KGroupedStreamImplTest {
             inputTopic.pipeInput("2", "B", 500L);
             inputTopic.pipeInput("3", "B", 100L);
         }
-        assertThat(supplier.theCapturedProcessor().processed, equalTo(Arrays.asList(
+        assertThat(supplier.theCapturedProcessor().processed(), equalTo(Arrays.asList(
             new KeyValueTimestamp<>(new Windowed<>("1", new TimeWindow(0L, 500L)), 1L, 0L),
             new KeyValueTimestamp<>(new Windowed<>("1", new TimeWindow(0L, 500L)), 2L, 499L),
             new KeyValueTimestamp<>(new Windowed<>("1", new TimeWindow(0L, 500L)), 3L, 499L),
@@ -659,7 +653,6 @@ public class KGroupedStreamImplTest {
     @Test
     public void shouldCountWindowedWithInternalStoreName() {
         final MockProcessorSupplier<Windowed<String>, Long> supplier = new MockProcessorSupplier<>();
-        final List<KeyValue<Windowed<String>, KeyValue<Long, Long>>> results = new ArrayList<>();
         groupedStream
             .windowedBy(TimeWindows.of(ofMillis(500L)))
             .count()
