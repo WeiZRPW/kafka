@@ -744,6 +744,7 @@ project(':core') {
 
   dependencies {
     compile project(':clients')
+    compile libs.slf4jlog4j12
     compile project(':raft')
     compile libs.jacksonDatabind
     compile libs.jacksonModuleScala
